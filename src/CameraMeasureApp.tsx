@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 
 // ------------------------------------------------------------
 // CameraMeasureApp
@@ -30,8 +30,6 @@ export default function CameraMeasureApp() {
   const [mirror, setMirror] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
   const [showEdges, setShowEdges] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
 
   type Pt = { x: number; y: number };
   type Segment = { a: Pt; b: Pt; id: string; label?: string };
@@ -45,14 +43,6 @@ export default function CameraMeasureApp() {
   // escala: unidade por pixel (ex.: mm/px)
   const [unit, setUnit] = useState<"mm" | "cm" | "in">("mm");
   const [unitPerPx, setUnitPerPx] = useState<number | null>(null);
-
-  const unitFactorToMM = useMemo(() => {
-    switch (unit) {
-      case "mm": return 1;
-      case "cm": return 10;
-      case "in": return 25.4;
-    }
-  }, [unit]);
 
   const pxToUnit = (px: number) => {
     if (!unitPerPx) return null;
@@ -83,59 +73,10 @@ export default function CameraMeasureApp() {
       }
     }
     init();
-  }, []);
-
-  // Atualiza stream quando deviceId/constraints mudam
-  useEffect(() => {
-    async function start() {
-      try {
-        if (!deviceId) return;
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { ...((constraints.video as MediaTrackConstraints) || {}), deviceId: { exact: deviceId } },
-          audio: false,
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-          setStreamReady(true);
-        }
-      } catch (e: any) {
-        console.error(e);
-        setError(e?.message || "Falha ao acessar câmera");
-      }
-    }
-    start();
-
-    return () => {
-      const v = videoRef.current as HTMLVideoElement | null;
-      if (v && v.srcObject) {
-        (v.srcObject as MediaStream).getTracks().forEach((t) => t.stop());
-        v.srcObject = null;
-      }
-    };
-  }, [deviceId, constraints]);
-
-  // Ajusta canvas ao vídeo
-  useEffect(() => {
-    const v = videoRef.current;
-    const c = canvasRef.current;
-    const o = overlayRef.current;
-    if (!v || !c || !o) return;
-
-    const onLoaded = () => {
-      c.width = v.videoWidth;
-      c.height = v.videoHeight;
-      o.width = v.videoWidth;
-      o.height = v.videoHeight;
-      draw();
-    };
-
-    v.addEventListener("loadedmetadata", onLoaded);
-    return () => v.removeEventListener("loadedmetadata", onLoaded);
-  }, [streamReady]);
+  }, [deviceId]);
 
   // Desenho overlay (pontos/linhas/grid)
-  const draw = () => {
+  const draw = useCallback(() => {
     const o = overlayRef.current;
     if (!o) return;
     const ctx = o.getContext("2d")!;
@@ -251,7 +192,55 @@ export default function CameraMeasureApp() {
       });
       ctx3.restore();
     }
-  };
+  }, [angles, formatLen, mode, pxToUnit, segments, showGrid, tempPts]);
+
+  // Atualiza stream quando deviceId/constraints mudam
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    async function start() {
+      try {
+        if (!deviceId) return;
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { ...((constraints.video as MediaTrackConstraints) || {}), deviceId: { exact: deviceId } },
+          audio: false,
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+          setStreamReady(true);
+        }
+      } catch (e: any) {
+        console.error(e);
+        setError(e?.message || "Falha ao acessar câmera");
+      }
+    }
+    start();
+
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, [deviceId, constraints]);
+
+  // Ajusta canvas ao vídeo
+  useEffect(() => {
+    const v = videoRef.current;
+    const c = canvasRef.current;
+    const o = overlayRef.current;
+    if (!v || !c || !o) return;
+
+    const onLoaded = () => {
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      o.width = v.videoWidth;
+      o.height = v.videoHeight;
+      draw();
+    };
+
+    v.addEventListener("loadedmetadata", onLoaded);
+    return () => v.removeEventListener("loadedmetadata", onLoaded);
+  }, [streamReady, draw]);
 
   // Captura um frame do vídeo para o canvas de base (para aplicar filtros e salvar)
   const snapshotToCanvas = () => {
@@ -338,7 +327,7 @@ export default function CameraMeasureApp() {
   // Redesenhar quando estruturas mudarem
   useEffect(() => {
     draw();
-  }, [segments, angles, tempPts, showGrid, unit, unitPerPx]);
+  }, [segments, angles, tempPts, showGrid, unit, unitPerPx, draw]);
 
   // Limpeza
   const clearAll = () => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import CameraMeasureApp from './CameraMeasureApp';
+import CameraMeasureApp from './CameraMeasureApp.tsx';
 import './App.css';
 
 function App() {
